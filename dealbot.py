@@ -1,6 +1,7 @@
 import asyncio
 import re
 import requests
+import os
 from urllib.parse import urljoin
 from playwright.async_api import async_playwright
 
@@ -14,7 +15,7 @@ MARKTPLAATS_URL = (
     "#PriceCentsTo:500|distanceMeters:8000|postcode:3116"
 )
 
-DISCORD_WEBHOOK = "HIER_JOUW_WEBHOOK"
+DISCORD_WEBHOOK = os.environ["DISCORD_WEBHOOK"]
 
 MAX_PRIJS = 5
 CONTROLE_INTERVAL = 300  # 5 minuten
