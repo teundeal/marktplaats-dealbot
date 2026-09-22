@@ -1,0 +1,59 @@
+name: Marktplaats Dealbot
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "7,22,37,52 * * * *"
+
+jobs:
+  dealbot:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Code ophalen
+        uses: actions/checkout@v4
+
+      - name: Python instellen
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Benodigde pakketten installeren
+        run: |
+          pip install playwright requests
+          python -m playwright install chromium
+          python -m playwright install-deps chromium
+
+      - name: Dealbot starten
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: python dealbot.pyname: Marktplaats Dealbot
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "7,22,37,52 * * * *"
+
+jobs:
+  dealbot:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Code ophalen
+        uses: actions/checkout@v4
+
+      - name: Python instellen
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Benodigde pakketten installeren
+        run: |
+          pip install playwright requests
+          python -m playwright install chromium
+          python -m playwright install-deps chromium
+
+      - name: Dealbot starten
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: python dealbot.py
