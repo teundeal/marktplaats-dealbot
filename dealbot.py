@@ -40,10 +40,9 @@ MAX_KANDIDATEN = 15
 # ============================================================
 
 def euro_naar_float(tekst):
-if not tekst:
-return None
+    if not tekst:
+        return None
 
-```
 tekst = tekst.strip()
 tekst = tekst.replace("€", "")
 tekst = tekst.replace("\xa0", " ")
