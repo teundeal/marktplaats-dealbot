@@ -580,7 +580,7 @@ def main():
                 + "/?postcode="
                 + POSTCODE
                 + "&distanceMeters="
-                + AFSTAND
+                + str(AFSTAND)
             )
 
             try:
