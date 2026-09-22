@@ -14,7 +14,7 @@ MARKTPLAATS_URL = (
 DISCORD_WEBHOOK = os.environ["DISCORD_WEBHOOK"]
 
 MAX_PRIJS = 5.00
-MIN_VERKOOPPRIJS = 10.00
+MIN_VERKOOPWAARDE = 10.00
 MIN_VERTROUWEN = 70
 
 UITSLUITEN = [
@@ -23,9 +23,9 @@ UITSLUITEN = [
     "kledingkast", "tuinset", "tuinbank", "pallet",
     "wasmachine", "droger", "koelkast", "vriezer",
     "vaatwasser", "piano", "grote tv", "televisie",
-    "airco montage", "montage", "installatie", "reparatie",
+    "airco", "montage", "installatie", "reparatie",
     "klus", "dienst", "service", "vervoer", "verhuizen",
-    "ophalen", "afvoer"
+    "afvoer", "grond", "tegels", "klinkers", "stenen"
 ]
 
 INTERESSANT = [
@@ -36,7 +36,10 @@ INTERESSANT = [
     "nike", "adidas", "air jordan", "dyson", "logitech",
     "jbl", "bose", "garmin", "casio", "gopro", "dji",
     "koptelefoon", "speaker", "gereedschap", "boormachine",
-    "verrekijker", "collectie", "verzameling"
+    "verrekijker", "horloge", "watch", "collectie",
+    "verzameling", "modelauto", "burago", "ferrari",
+    "mercedes", "bmw", "porsche", "nokia", "tablet",
+    "monitor", "toetsenbord", "muis", "printer"
 ]
 
 
@@ -118,7 +121,7 @@ def uitgesloten(titel):
     )
 
 
-def interessante_titel(titel):
+def bevat_interessant_woord(titel):
 
     tekst = titel.lower()
 
@@ -188,47 +191,52 @@ async def zoek_advertenties(page):
     return advertenties
 
 
-def zoekwoorden(titel):
+def maak_zoekterm(titel):
 
-    woorden = []
+    woorden = re.findall(
+        r"[a-zA-Z0-9]+",
+        titel.lower()
+    )
 
-    tekst = titel.lower()
+    # Veelvoorkomende nutteloze woorden verwijderen
+    stopwoorden = {
+        "gratis", "nieuw", "gebruikte", "gebruikt",
+        "mooie", "mooie", "zeer", "goede", "goed",
+        "te", "koop", "af", "halen", "voor"
+    }
 
-    for woord in INTERESSANT:
-        if woord in tekst:
-            woorden.append(woord)
+    woorden = [
+        woord
+        for woord in woorden
+        if len(woord) >= 3
+        and woord not in stopwoorden
+    ]
 
-    if not woorden:
-        simpele = re.findall(
-            r"[a-zA-Z0-9]+",
-            tekst
-        )
+    # Bekende merk/productwoorden krijgen voorrang
+    bekende = [
+        woord for woord in woorden
+        if woord in INTERESSANT
+    ]
 
-        woorden = [
-            woord for woord in simpele
-            if len(woord) >= 4
-        ][:4]
+    if bekende:
+        return " ".join(bekende[:3])
 
-    return woorden
+    return " ".join(woorden[:3])
 
 
 async def vergelijkbare_prijzen(page, titel):
 
-    woorden = zoekwoorden(titel)
+    zoekterm = maak_zoekterm(titel)
 
-    if not woorden:
+    if not zoekterm:
         return []
-
-    zoekterm = " ".join(woorden[:4])
 
     url = (
         "https://www.marktplaats.nl/q/"
         + quote(zoekterm)
     )
 
-    print(
-        f"   🔎 Vergelijken: {zoekterm}"
-    )
+    print(f"   🔎 Vergelijken: {zoekterm}")
 
     try:
 
@@ -240,7 +248,7 @@ async def vergelijkbare_prijzen(page, titel):
 
         await page.wait_for_timeout(5000)
 
-    except Exception as e:
+    except:
         print("   ⚠️ Vergelijking mislukt")
         return []
 
@@ -250,7 +258,7 @@ async def vergelijkbare_prijzen(page, titel):
 
     prijzen = []
 
-    for link in links[:40]:
+    for link in links[:50]:
 
         try:
 
@@ -275,82 +283,68 @@ async def vergelijkbare_prijzen(page, titel):
             if not gevonden:
                 continue
 
-            for prijs in gevonden[:1]:
+            waarde = float(
+                gevonden[0].replace(",", ".")
+            )
 
-                waarde = float(
-                    prijs.replace(",", ".")
-                )
-
-                # Extreem hoge of lage prijzen negeren
-                if 1 <= waarde <= 5000:
-                    prijzen.append(waarde)
+            if 1 <= waarde <= 5000:
+                prijzen.append(waarde)
 
         except:
             pass
 
-    return prijzen[:20]
+    return prijzen
 
 
 def bereken_vertrouwen(
     titel,
-    aankoopprijs,
     vergelijkbare
 ):
 
-    if not vergelijkbare:
+    aantal = len(vergelijkbare)
+
+    if aantal < 3:
         return 0
 
-    vertrouwen = 35
+    vertrouwen = 50
 
-    # Meer vergelijkbare advertenties = meer vertrouwen
-    if len(vergelijkbare) >= 3:
-        vertrouwen += 15
-
-    if len(vergelijkbare) >= 5:
+    if aantal >= 5:
         vertrouwen += 10
 
-    if len(vergelijkbare) >= 8:
+    if aantal >= 8:
+        vertrouwen += 10
+
+    if aantal >= 12:
         vertrouwen += 5
 
-    # Bekend product / merk
-    if interessante_titel(titel):
-        vertrouwen += 15
-
-    # Gratis spullen zijn iets onzekerder
-    if aankoopprijs == 0:
-        vertrouwen -= 5
+    if bevat_interessant_woord(titel):
+        vertrouwen += 10
 
     return min(95, vertrouwen)
 
 
 def bereken_score(
     titel,
-    aankoopprijs,
+    prijs,
     verkoopprijs,
     vertrouwen
 ):
 
-    score = 20
+    score = 30
 
-    if aankoopprijs == 0:
-        score += 25
-
-    elif aankoopprijs <= 2:
+    if prijs == 0:
         score += 20
-
+    elif prijs <= 2:
+        score += 15
     else:
         score += 10
 
-    if interessante_titel(titel):
-        score += 20
-
-    if verkoopprijs >= max(
-        aankoopprijs * 3,
-        20
-    ):
+    if bevat_interessant_woord(titel):
         score += 15
 
-    elif verkoopprijs >= aankoopprijs * 2:
+    if prijs > 0 and verkoopprijs >= prijs * 3:
+        score += 15
+    elif prijs > 0 and verkoopprijs >= prijs * 2:
         score += 10
 
     if vertrouwen >= 80:
@@ -359,10 +353,7 @@ def bereken_score(
     return min(score, 100)
 
 
-async def controleer_deal(
-    page,
-    advertentie
-):
+async def controleer_deal(page, advertentie):
 
     titel = advertentie["titel"]
     prijs = advertentie["prijs"]
@@ -376,10 +367,7 @@ async def controleer_deal(
     if uitgesloten(titel):
         return None
 
-    # We willen geen totaal willekeurige spullen
-    if not interessante_titel(titel):
-        return None
-
+    # Nu NIET meer verplicht een bekend merk te hebben.
     vergelijkbare = await vergelijkbare_prijzen(
         page,
         titel
@@ -392,27 +380,17 @@ async def controleer_deal(
         )
         return None
 
-    verkoopprijs = median(
-        vergelijkbare
-    )
+    verkoopprijs = median(vergelijkbare)
 
     vertrouwen = bereken_vertrouwen(
         titel,
-        prijs,
         vergelijkbare
     )
 
-    score = bereken_score(
-        titel,
-        prijs,
-        verkoopprijs,
-        vertrouwen
-    )
-
-    # Minimaal dubbele waarde
+    # Gratis spullen moeten minimaal ongeveer €10 waard zijn.
     if prijs == 0:
         dubbele_waarde = (
-            verkoopprijs >= MIN_VERKOOPPRIJS
+            verkoopprijs >= MIN_VERKOOPWAARDE
         )
     else:
         dubbele_waarde = (
@@ -421,11 +399,11 @@ async def controleer_deal(
 
     if not dubbele_waarde:
         print(
-            f"   ❌ Geen 2x waarde: {titel}"
+            f"   ❌ Minder dan 2x waarde: {titel}"
         )
         return None
 
-    if verkoopprijs < MIN_VERKOOPPRIJS:
+    if verkoopprijs < MIN_VERKOOPWAARDE:
         return None
 
     if vertrouwen < MIN_VERTROUWEN:
@@ -436,6 +414,13 @@ async def controleer_deal(
         return None
 
     winst = verkoopprijs - prijs
+
+    score = bereken_score(
+        titel,
+        prijs,
+        verkoopprijs,
+        vertrouwen
+    )
 
     return {
         "titel": titel,
@@ -469,9 +454,7 @@ async def main():
 
         page = await browser.new_page()
 
-        advertenties = await zoek_advertenties(
-            page
-        )
+        advertenties = await zoek_advertenties(page)
 
         print(
             f"📦 {len(advertenties)} unieke advertenties gevonden."
