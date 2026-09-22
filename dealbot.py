@@ -73,40 +73,139 @@ def interessant(titel):
     return any(woord in tekst for woord in INTERESSANT)
 
 
-def vind_prijs(tekst):
-    tekst = tekst.replace("\xa0", " ")
+def echte_advertentieprijs(page):
+    """
+    Probeert alleen de daadwerkelijke vraagprijs van de advertentie
+    te vinden.
 
-    patronen = [
-        r"€\s*([0-9]+(?:[.,][0-9]{1,2})?)",
-        r"([0-9]+(?:[.,][0-9]{1,2})?)\s*€",
-    ]
+    Verzendkosten worden NIET gebruikt.
+    'Bieden' wordt overgeslagen.
+    """
 
-    prijzen = []
+    try:
+        # Eerst kijken naar duidelijke prijs-elementen.
+        mogelijke_selectors = [
+            '[data-testid*="price"]',
+            '[class*="price"]',
+            '[class*="Price"]',
+        ]
 
-    for patroon in patronen:
-        for match in re.findall(patroon, tekst):
+        teksten = []
+
+        for selector in mogelijke_selectors:
+
             try:
-                prijs = float(match.replace(",", "."))
+                elementen = page.locator(selector).all_inner_texts()
 
-                if 0 <= prijs <= 5:
-                    prijzen.append(prijs)
+                for tekst in elementen:
+                    tekst = tekst.strip()
 
-            except ValueError:
+                    if tekst:
+                        teksten.append(tekst)
+
+            except Exception:
                 pass
 
-    if prijzen:
-        return min(prijzen)
+        # Dubbele teksten verwijderen.
+        uniek = []
 
-    if "gratis" in tekst.lower():
-        return 0
+        for tekst in teksten:
+            if tekst not in uniek:
+                uniek.append(tekst)
 
-    return None
+        # Zoek naar een echte prijs.
+        for tekst in uniek:
+
+            laag = tekst.lower()
+
+            if "bieden" in laag:
+                continue
+
+            if "vanaf" in laag:
+                continue
+
+            matches = re.findall(
+                r"€\s*([0-9]+(?:[.,][0-9]{1,2})?)",
+                tekst
+            )
+
+            for waarde in matches:
+
+                try:
+                    prijs = float(
+                        waarde.replace(",", ".")
+                    )
+
+                    # Alleen een echte advertentieprijs
+                    # onder of gelijk aan €5.
+                    if 0 <= prijs <= MAX_PRIJS:
+                        return prijs
+
+                except ValueError:
+                    pass
+
+        # Tweede methode:
+        # kijk naar de zichtbare tekst bovenaan de advertentie,
+        # maar negeer verzendkosten.
+        body = page.locator("body").inner_text()
+
+        regels = [
+            regel.strip()
+            for regel in body.splitlines()
+            if regel.strip()
+        ]
+
+        for i, regel in enumerate(regels[:100]):
+
+            laag = regel.lower()
+
+            if "bieden" in laag:
+                continue
+
+            if "verzending" in laag:
+                continue
+
+            if "verzendkosten" in laag:
+                continue
+
+            if "ophalen" in laag and i + 1 < len(regels):
+
+                volgende = regels[i + 1]
+
+                match = re.search(
+                    r"€\s*([0-9]+(?:[.,][0-9]{1,2})?)",
+                    volgende
+                )
+
+                if match:
+
+                    try:
+                        prijs = float(
+                            match.group(1).replace(",", ".")
+                        )
+
+                        if 0 <= prijs <= MAX_PRIJS:
+                            return prijs
+
+                    except ValueError:
+                        pass
+
+        return None
+
+    except Exception:
+        return None
 
 
 def zoek_vergelijkbare_prijzen(page, zoekterm):
-    url = "https://www.marktplaats.nl/q/" + quote(zoekterm) + "/"
+
+    url = (
+        "https://www.marktplaats.nl/q/"
+        + quote(zoekterm)
+        + "/"
+    )
 
     try:
+
         page.goto(
             url,
             wait_until="domcontentloaded",
@@ -125,8 +224,12 @@ def zoek_vergelijkbare_prijzen(page, zoekterm):
         prijzen = []
 
         for waarde in gevonden:
+
             try:
-                prijs = float(waarde.replace(",", "."))
+
+                prijs = float(
+                    waarde.replace(",", ".")
+                )
 
                 if 5 <= prijs <= 2000:
                     prijzen.append(prijs)
@@ -141,8 +244,11 @@ def zoek_vergelijkbare_prijzen(page, zoekterm):
 
 
 def stuur_discord(deals):
+
     if not deals:
+
         print("🔥 0 mogelijke deals gevonden.")
+
         return
 
     for deal in deals:
@@ -159,6 +265,7 @@ def stuur_discord(deals):
         )
 
         try:
+
             response = requests.post(
                 DISCORD_WEBHOOK,
                 json={"content": bericht},
@@ -174,7 +281,11 @@ def stuur_discord(deals):
                 )
 
         except Exception as e:
-            print("⚠️ Discord fout:", e)
+
+            print(
+                "⚠️ Discord fout:",
+                e
+            )
 
 
 def main():
@@ -183,12 +294,18 @@ def main():
 
     with sync_playwright() as p:
 
-        browser = p.chromium.launch(headless=True)
+        browser = p.chromium.launch(
+            headless=True
+        )
+
         page = browser.new_page()
 
         print("🔎 Marktplaats zoeken...")
 
-        # Advertenties verzamelen
+        # ----------------------------------
+        # ADVERTENTIES VERZAMELEN
+        # ----------------------------------
+
         for zoekterm in ZOEKOPDRACHTEN:
 
             url = (
@@ -223,8 +340,15 @@ def main():
 
                 for item in links:
 
-                    href = item.get("href", "")
-                    titel = item.get("text", "").strip()
+                    href = item.get(
+                        "href",
+                        ""
+                    )
+
+                    titel = item.get(
+                        "text",
+                        ""
+                    ).strip()
 
                     if "/v/" not in href:
                         continue
@@ -243,17 +367,26 @@ def main():
                     advertenties[href] = titel
 
             except Exception:
-                print(f"⚠️ Zoekfout bij '{zoekterm}'")
+
+                print(
+                    f"⚠️ Zoekfout bij '{zoekterm}'"
+                )
 
         print(
             f"📦 {len(advertenties)} interessante advertenties gevonden."
         )
 
-        # Maximaal 20 kandidaten controleren
-        kandidaten = list(advertenties.items())[:20]
+        # ----------------------------------
+        # KANDIDATEN CONTROLEREN
+        # ----------------------------------
+
+        kandidaten = list(
+            advertenties.items()
+        )[:20]
 
         print(
-            f"🔍 We controleren maximaal {len(kandidaten)} kandidaten."
+            f"🔍 We controleren maximaal "
+            f"{len(kandidaten)} kandidaten."
         )
 
         deals = []
@@ -264,7 +397,8 @@ def main():
         ):
 
             print(
-                f"➡️ Controle {nummer}/{len(kandidaten)}: "
+                f"➡️ Controle {nummer}/"
+                f"{len(kandidaten)}: "
                 f"{titel[:70]}"
             )
 
@@ -276,17 +410,38 @@ def main():
                     timeout=12000
                 )
 
-                page.wait_for_timeout(500)
+                page.wait_for_timeout(700)
 
-                tekst = page.locator("body").inner_text()
-
-                koopprijs = vind_prijs(tekst)
+                # BELANGRIJK:
+                # alleen de echte advertentieprijs.
+                koopprijs = echte_advertentieprijs(
+                    page
+                )
 
                 if koopprijs is None:
+
+                    print(
+                        "   ❌ Geen betrouwbare koopprijs."
+                    )
+
                     continue
 
                 if koopprijs > MAX_PRIJS:
+
+                    print(
+                        f"   ❌ Te duur: €{koopprijs:.2f}"
+                    )
+
                     continue
+
+                print(
+                    f"   💰 Echte koopprijs: "
+                    f"€{koopprijs:.2f}"
+                )
+
+                # ----------------------------------
+                # VERGELIJKBARE PRODUCTEN
+                # ----------------------------------
 
                 woorden = re.findall(
                     r"[A-Za-z0-9]+",
@@ -294,17 +449,21 @@ def main():
                 )
 
                 zoekwoorden = [
-                    woord for woord in woorden
+                    woord
+                    for woord in woorden
                     if len(woord) >= 3
                 ]
 
-                zoekterm = " ".join(zoekwoorden[:4])
+                zoekterm = " ".join(
+                    zoekwoorden[:4]
+                )
 
                 if not zoekterm:
                     continue
 
                 print(
-                    f"   🔎 Vergelijken met: {zoekterm}"
+                    f"   🔎 Vergelijken met: "
+                    f"{zoekterm}"
                 )
 
                 prijzen = zoek_vergelijkbare_prijzen(
@@ -313,11 +472,20 @@ def main():
                 )
 
                 if len(prijzen) < 3:
-                    print("   ❌ Te weinig vergelijkbare prijzen.")
+
+                    print(
+                        "   ❌ Te weinig "
+                        "vergelijkbare prijzen."
+                    )
+
                     continue
 
-                verkoopprijs = statistics.median(prijzen)
+                verkoopprijs = statistics.median(
+                    prijzen
+                )
 
+                # Gratis producten moeten
+                # minimaal €10 waard zijn.
                 if koopprijs == 0:
 
                     if verkoopprijs < 10:
@@ -336,30 +504,44 @@ def main():
                 if len(prijzen) >= 8:
                     vertrouwen += 10
 
-                vertrouwen = min(vertrouwen, 95)
+                vertrouwen = min(
+                    vertrouwen,
+                    95
+                )
 
-                winst = verkoopprijs - koopprijs
+                winst = (
+                    verkoopprijs
+                    - koopprijs
+                )
 
-                deals.append({
-                    "titel": titel,
-                    "koopprijs": koopprijs,
-                    "verkoopprijs": verkoopprijs,
-                    "winst": winst,
-                    "vertrouwen": vertrouwen,
-                    "vergelijkingen": len(prijzen),
-                    "url": url,
-                })
+                deals.append(
+                    {
+                        "titel": titel,
+                        "koopprijs": koopprijs,
+                        "verkoopprijs": verkoopprijs,
+                        "winst": winst,
+                        "vertrouwen": vertrouwen,
+                        "vergelijkingen": len(prijzen),
+                        "url": url,
+                    }
+                )
 
                 print(
-                    f"   🔥 DEAL! Verkoop ongeveer "
+                    f"   🔥 DEAL! "
+                    f"Geschatte verkoop: "
                     f"€{verkoopprijs:.2f}"
                 )
 
-            except Exception:
-                print("   ⚠️ Advertentie overgeslagen.")
+            except Exception as e:
+
+                print(
+                    "   ⚠️ Advertentie "
+                    "overgeslagen."
+                )
 
         browser.close()
 
+    # Hoogste geschatte winst eerst.
     deals.sort(
         key=lambda deal: deal["winst"],
         reverse=True
