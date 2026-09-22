@@ -626,38 +626,49 @@ def vind_advertentielinks(page, zoekterm):
         return []
 
     try:
-        page.wait_for_timeout(1500)
+        page.wait_for_timeout(2000)
     except Exception:
         pass
 
     links = {}
 
+    # Eerst alle links ophalen
     try:
-        elementen = page.locator('a[href*="/v/"]')
+        alle_links = page.locator("a")
 
-        aantal = elementen.count()
+        aantal = alle_links.count()
+
+        print(f"   🔗 {aantal} links op de pagina gevonden")
 
         for i in range(aantal):
 
             try:
-                href = elementen.nth(i).get_attribute("href")
+                element = alle_links.nth(i)
 
-                if not is_echte_marktplaats_link(href):
+                href = element.get_attribute("href")
+
+                if not href:
                     continue
 
+                # Absolute URL
                 url = volledige_url(href)
 
-                # URL normaliseren
+                # Alleen Marktplaats
+                if not is_echte_marktplaats_link(url):
+                    continue
+
+                # URL opschonen
                 url = url.split("?")[0]
 
-                if url not in links:
+                if url in links:
+                    continue
 
-                    try:
-                        kaart_tekst = elementen.nth(i).inner_text(timeout=1000)
-                    except Exception:
-                        kaart_tekst = ""
+                try:
+                    kaart_titel = element.inner_text(timeout=1000).strip()
+                except Exception:
+                    kaart_titel = ""
 
-                    links[url] = kaart_tekst
+                links[url] = kaart_titel
 
             except Exception:
                 continue
@@ -667,8 +678,32 @@ def vind_advertentielinks(page, zoekterm):
 
     print(f"   📦 {len(links)} echte Marktplaats-links gevonden")
 
-    return list(links.items())
+    # Debuggen als Marktplaats weer iets anders gebruikt
+    if len(links) == 0:
 
+        print("   ⚠️ Geen advertentielinks gevonden.")
+
+        try:
+            html = page.content()
+
+            # Kijk of /v/ überhaupt in de HTML staat
+            aantal_v = html.count("/v/")
+
+            print(
+                f"   🔎 '/v/' komt {aantal_v} keer voor in de HTML"
+            )
+
+            # Kijk ook of marktplaats advertentie-url's voorkomen
+            if "marktplaats.nl/v/" in html:
+                print(
+                    "   ℹ️ /v/ staat wel in HTML, "
+                    "maar werd niet als normale link gevonden."
+                )
+
+        except Exception:
+            pass
+
+    return list(links.items())
 
 # =========================
 # VERKOOPWAARDE SCHATTEN
