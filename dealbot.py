@@ -7,10 +7,6 @@ from urllib.parse import quote
 from playwright.sync_api import sync_playwright
 
 
-# ============================================================
-# INSTELLINGEN
-# ============================================================
-
 POSTCODE = "3116"
 AFSTAND = 8000
 MAX_PRIJS = 5.00
@@ -34,7 +30,7 @@ MAX_KANDIDATEN = 15
 
 
 # ============================================================
-# PRIJS OMZETTEN
+# PRIJS
 # ============================================================
 
 def euro_naar_float(tekst):
@@ -44,7 +40,6 @@ def euro_naar_float(tekst):
     tekst = tekst.strip()
     tekst = tekst.replace("€", "")
     tekst = tekst.replace("\xa0", " ")
-    tekst = tekst.strip()
 
     match = re.search(r"\d[\d.,]*", tekst)
 
@@ -53,16 +48,13 @@ def euro_naar_float(tekst):
 
     waarde = match.group(0)
 
-    # 1.500,00 -> 1500.00
     if "." in waarde and "," in waarde:
         waarde = waarde.replace(".", "")
         waarde = waarde.replace(",", ".")
 
-    # 4,50 -> 4.50
     elif "," in waarde:
         waarde = waarde.replace(",", ".")
 
-    # 1.500 -> 1500
     elif "." in waarde:
         delen = waarde.split(".")
 
@@ -97,7 +89,7 @@ def vind_europrijzen(tekst):
 
 
 # ============================================================
-# TITEL SCHOONMAKEN
+# TITEL
 # ============================================================
 
 ROMMEL_IN_TITEL = [
@@ -142,13 +134,11 @@ def schone_titel(tekst):
             flags=re.IGNORECASE
         )
 
-    titel = re.sub(r"\s+", " ", titel).strip()
-
-    return titel
+    return re.sub(r"\s+", " ", titel).strip()
 
 
 # ============================================================
-# DIENSTEN / NIET-PRODUCTEN
+# DIENSTEN
 # ============================================================
 
 DIENSTEN = [
@@ -182,16 +172,13 @@ DIENSTEN = [
     "website",
     "webdesign",
     "marketing",
-    "advertentie",
     "cursus",
     "opleiding",
     "training",
-    "les",
     "bijles",
     "coaching",
     "consult",
     "advies",
-    "adviesgesprek",
     "abonnement",
     "lidmaatschap",
     "reservering",
@@ -223,7 +210,7 @@ def is_dienst(tekst):
 
 
 # ============================================================
-# GROTE PRODUCTEN UITSLUITEN
+# GROTE SPULLEN
 # ============================================================
 
 UITGESLOTEN = [
@@ -359,7 +346,6 @@ def geldig_product(tekst):
         "bestel",
         "leverbaar",
         "voorraad",
-        "beperkte voorraad",
         "neem contact",
         "contacteer",
     ]
@@ -372,7 +358,7 @@ def geldig_product(tekst):
 
 
 # ============================================================
-# ADVERTENTIEKAARTEN
+# ADVERTENTIES LEZEN
 # ============================================================
 
 def advertentiekaarten(page, maximale_aankoopprijs=None):
@@ -380,7 +366,10 @@ def advertentiekaarten(page, maximale_aankoopprijs=None):
     kaarten = []
 
     links = page.locator('a[href*="/v/"]')
+
     aantal = links.count()
+
+    print("DEBUG: aantal advertentielinks =", aantal)
 
     for i in range(aantal):
 
@@ -400,7 +389,14 @@ def advertentiekaarten(page, maximale_aankoopprijs=None):
             if not tekst:
                 continue
 
-            tekst = re.sub(r"\s+", " ", tekst).strip()
+            tekst = re.sub(
+                r"\s+",
+                " ",
+                tekst
+            ).strip()
+
+            if i < 5:
+                print("DEBUG AD:", tekst[:500])
 
             tekst_lower = tekst.lower()
 
@@ -452,8 +448,8 @@ def advertentiekaarten(page, maximale_aankoopprijs=None):
                 "prijs": prijs,
             })
 
-        except Exception:
-            continue
+        except Exception as fout:
+            print("DEBUG advertentie fout:", fout)
 
     unieke = {}
 
@@ -464,7 +460,7 @@ def advertentiekaarten(page, maximale_aankoopprijs=None):
 
 
 # ============================================================
-# VERKOOPPRIJZEN ZOEKEN
+# VERKOOPPRIJZEN
 # ============================================================
 
 def zoek_verkoopprijzen(page, zoekterm):
@@ -497,6 +493,7 @@ def zoek_verkoopprijzen(page, zoekterm):
         prijzen = []
 
         for kaart in kaarten:
+
             prijs = kaart["prijs"]
 
             if prijs <= 0:
@@ -506,7 +503,8 @@ def zoek_verkoopprijzen(page, zoekterm):
 
         return prijzen[:20]
 
-    except Exception:
+    except Exception as fout:
+        print("Fout verkoopprijzen:", fout)
         return []
 
 
@@ -535,59 +533,7 @@ def schat_verkoopprijs(prijzen):
 
 
 # ============================================================
-# DISCORD
-# ============================================================
-
-def stuur_discord(kaart, verkoopprijs, score):
-
-    aankoopprijs = kaart["prijs"]
-
-    if verkoopprijs is None:
-        winst = None
-    else:
-        winst = verkoopprijs - aankoopprijs
-
-    if winst is None:
-        winst_tekst = "Onbekend"
-    else:
-        winst_tekst = f"€{winst:.2f}"
-
-    if verkoopprijs is None:
-        verkoop_tekst = "Onbekend"
-    else:
-        verkoop_tekst = f"€{verkoopprijs:.2f}"
-
-    bericht = (
-        "🔥 **MOGELIJKE MARKTPLAATS DEAL**\n\n"
-        f"**{kaart['titel']}**\n\n"
-        f"💰 Aankoop: **€{aankoopprijs:.2f}**\n"
-        f"📈 Geschatte verkoop: **{verkoop_tekst}**\n"
-        f"💵 Mogelijke winst: **{winst_tekst}**\n"
-        f"⭐ Deal score: **{score}/10**\n\n"
-        f"🔗 {kaart['url']}"
-    )
-
-    try:
-        response = requests.post(
-            DISCORD_WEBHOOK,
-            json={"content": bericht},
-            timeout=15
-        )
-
-        print(
-            "Discord:",
-            response.status_code
-        )
-
-    except Exception as fout:
-        print(
-            "Discord fout:",
-            fout
-        )
-
-
-# ============================================================
-# DEAL SCORE
+# SCORE
 # ============================================================
 
 def bereken_score(aankoopprijs, verkoopprijs):
@@ -600,7 +546,10 @@ def bereken_score(aankoopprijs, verkoopprijs):
     if winst <= 0:
         return 0
 
-    verhouding = winst / max(aankoopprijs, 0.01)
+    verhouding = winst / max(
+        aankoopprijs,
+        0.01
+    )
 
     if winst >= 50 and verhouding >= 5:
         return 10
@@ -621,6 +570,68 @@ def bereken_score(aankoopprijs, verkoopprijs):
         return 5
 
     return 4
+
+
+# ============================================================
+# DISCORD
+# ============================================================
+
+def stuur_discord(
+    kaart,
+    verkoopprijs,
+    score
+):
+
+    aankoopprijs = kaart["prijs"]
+
+    if verkoopprijs is None:
+        winst = None
+    else:
+        winst = verkoopprijs - aankoopprijs
+
+    verkoop_tekst = (
+        "Onbekend"
+        if verkoopprijs is None
+        else f"€{verkoopprijs:.2f}"
+    )
+
+    winst_tekst = (
+        "Onbekend"
+        if winst is None
+        else f"€{winst:.2f}"
+    )
+
+    bericht = (
+        "🔥 **MOGELIJKE MARKTPLAATS DEAL**\n\n"
+        f"**{kaart['titel']}**\n\n"
+        f"💰 Aankoop: **€{aankoopprijs:.2f}**\n"
+        f"📈 Geschatte verkoop: **{verkoop_tekst}**\n"
+        f"💵 Mogelijke winst: **{winst_tekst}**\n"
+        f"⭐ Deal score: **{score}/10**\n\n"
+        f"🔗 {kaart['url']}"
+    )
+
+    try:
+
+        response = requests.post(
+            DISCORD_WEBHOOK,
+            json={
+                "content": bericht
+            },
+            timeout=15
+        )
+
+        print(
+            "Discord:",
+            response.status_code
+        )
+
+    except Exception as fout:
+
+        print(
+            "Discord fout:",
+            fout
+        )
 
 
 # ============================================================
@@ -672,6 +683,13 @@ def main():
 
                 page.wait_for_timeout(2000)
 
+                print("DEBUG URL:", page.url)
+                print("DEBUG TITEL:", page.title())
+                print(
+                    "DEBUG PAGINATEKST:",
+                    page.locator("body").inner_text()[:1500]
+                )
+
                 kaarten = advertentiekaarten(
                     page,
                     maximale_aankoopprijs=MAX_PRIJS
@@ -713,16 +731,14 @@ def main():
                 f"€{kaart['prijs']:.2f}"
             )
 
-            zoekterm = kaart["titel"]
-
             verkoopprijzen = zoek_verkoopprijzen(
                 page,
-                zoekterm
+                kaart["titel"]
             )
 
             print(
-                f"   Vergelijkbare prijzen: "
-                f"{verkoopprijzen}"
+                "   Vergelijkbare prijzen:",
+                verkoopprijzen
             )
 
             verkoopprijs = schat_verkoopprijs(
@@ -735,8 +751,8 @@ def main():
             )
 
             print(
-                f"   Geschatte verkoop: "
-                f"{verkoopprijs}"
+                "   Geschatte verkoop:",
+                verkoopprijs
             )
 
             print(
