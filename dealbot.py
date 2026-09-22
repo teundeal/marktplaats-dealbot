@@ -2,7 +2,8 @@ import asyncio
 import re
 import requests
 import os
-from urllib.parse import urljoin
+from urllib.parse import urljoin, quote
+from statistics import median
 from playwright.async_api import async_playwright
 
 MARKTPLAATS_URL = (
@@ -12,7 +13,9 @@ MARKTPLAATS_URL = (
 
 DISCORD_WEBHOOK = os.environ["DISCORD_WEBHOOK"]
 
-MAX_PRIJS = 5
+MAX_PRIJS = 5.00
+MIN_VERKOOPPRIJS = 10.00
+MIN_VERTROUWEN = 70
 
 UITSLUITEN = [
     "bank", "bankstel", "hoekbank", "stoel", "tafel",
@@ -21,7 +24,8 @@ UITSLUITEN = [
     "wasmachine", "droger", "koelkast", "vriezer",
     "vaatwasser", "piano", "grote tv", "televisie",
     "airco montage", "montage", "installatie", "reparatie",
-    "klus", "dienst", "service", "vervoer"
+    "klus", "dienst", "service", "vervoer", "verhuizen",
+    "ophalen", "afvoer"
 ]
 
 INTERESSANT = [
@@ -31,23 +35,24 @@ INTERESSANT = [
     "games", "controller", "lego", "pokemon", "hot wheels",
     "nike", "adidas", "air jordan", "dyson", "logitech",
     "jbl", "bose", "garmin", "casio", "gopro", "dji",
-    "koptelefoon", "speaker", "gereedschap", "accu",
-    "boormachine", "verrekijker", "collectie", "verzameling"
+    "koptelefoon", "speaker", "gereedschap", "boormachine",
+    "verrekijker", "collectie", "verzameling"
 ]
 
 
-def stuur_discord(titel, prijs, verkoopprijs, winst, score, kans, link):
+def stuur_discord(deal):
 
     bericht = {
         "content": (
             "🚨 **MOGELIJKE MARKTPLAATS DEAL** 🚨\n\n"
-            f"**{titel}**\n\n"
-            f"💰 Aankoop: **€{prijs:.2f}**\n"
-            f"💵 Geschatte verkoop: **€{verkoopprijs:.2f}**\n"
-            f"📈 Mogelijke winst: **€{winst:.2f}**\n"
-            f"⭐ Deal score: **{score}/100**\n"
-            f"🎯 Verkoopkans: **{kans}% (schatting)**\n\n"
-            f"🔗 {link}"
+            f"**{deal['titel']}**\n\n"
+            f"💰 Aankoop: **€{deal['prijs']:.2f}**\n"
+            f"💵 Geschatte verkoop: **€{deal['verkoopprijs']:.2f}**\n"
+            f"📈 Mogelijke winst: **€{deal['winst']:.2f}**\n"
+            f"⭐ Deal score: **{deal['score']}/100**\n"
+            f"🎯 Vertrouwen: **{deal['vertrouwen']}%**\n"
+            f"🔎 Vergelijkbare advertenties: **{deal['vergelijkbare']}**\n\n"
+            f"🔗 {deal['link']}"
         )
     }
 
@@ -61,7 +66,6 @@ def stuur_discord(titel, prijs, verkoopprijs, winst, score, kans, link):
         print("✅ Discord melding verstuurd")
     else:
         print("❌ Discord fout:", response.status_code)
-        print(response.text)
 
 
 def zoek_prijs(tekst):
@@ -75,73 +79,12 @@ def zoek_prijs(tekst):
     )
 
     if not gevonden:
-        return 0.0
+        return None
 
     try:
         return float(gevonden[0].replace(",", "."))
     except:
-        return 0.0
-
-
-def bereken_score(titel, prijs):
-
-    tekst = titel.lower()
-    score = 20
-
-    if prijs == 0:
-        score += 25
-    elif prijs <= 2:
-        score += 20
-    else:
-        score += 10
-
-    for woord in INTERESSANT:
-        if woord in tekst:
-            score += 10
-
-    return min(score, 100)
-
-
-def geschatte_verkoopprijs(titel, prijs):
-
-    tekst = titel.lower()
-
-    if any(x in tekst for x in [
-        "iphone", "ipad", "playstation", "ps5",
-        "ps4", "xbox", "nintendo switch"
-    ]):
-        return 25
-
-    if any(x in tekst for x in [
-        "camera", "lens", "objectief", "sony",
-        "canon", "nikon", "gopro", "dji"
-    ]):
-        return 30
-
-    if any(x in tekst for x in [
-        "lego", "pokemon", "hot wheels", "air jordan"
-    ]):
-        return 20
-
-    if any(x in tekst for x in [
-        "nike", "adidas"
-    ]):
-        return 15
-
-    if any(x in tekst for x in [
-        "jbl", "bose", "speaker", "koptelefoon", "logitech"
-    ]):
-        return 15
-
-    if any(x in tekst for x in [
-        "gereedschap", "boormachine"
-    ]):
-        return 15
-
-    if prijs == 0:
-        return 10
-
-    return max(prijs * 2, 10)
+        return None
 
 
 def maak_titel_schoon(titel):
@@ -163,6 +106,26 @@ def maak_titel_schoon(titel):
         titel = titel.replace(woord, "")
 
     return " ".join(titel.split()).strip()
+
+
+def uitgesloten(titel):
+
+    tekst = titel.lower()
+
+    return any(
+        woord in tekst
+        for woord in UITSLUITEN
+    )
+
+
+def interessante_titel(titel):
+
+    tekst = titel.lower()
+
+    return any(
+        woord in tekst
+        for woord in INTERESSANT
+    )
 
 
 async def zoek_advertenties(page):
@@ -213,11 +176,9 @@ async def zoek_advertenties(page):
             if len(titel) < 3:
                 continue
 
-            prijs = zoek_prijs(titel)
-
             advertenties.append({
                 "titel": titel,
-                "prijs": prijs,
+                "prijs": zoek_prijs(titel),
                 "link": href
             })
 
@@ -227,35 +188,254 @@ async def zoek_advertenties(page):
     return advertenties
 
 
-def controleer_deal(advertentie):
+def zoekwoorden(titel):
+
+    woorden = []
+
+    tekst = titel.lower()
+
+    for woord in INTERESSANT:
+        if woord in tekst:
+            woorden.append(woord)
+
+    if not woorden:
+        simpele = re.findall(
+            r"[a-zA-Z0-9]+",
+            tekst
+        )
+
+        woorden = [
+            woord for woord in simpele
+            if len(woord) >= 4
+        ][:4]
+
+    return woorden
+
+
+async def vergelijkbare_prijzen(page, titel):
+
+    woorden = zoekwoorden(titel)
+
+    if not woorden:
+        return []
+
+    zoekterm = " ".join(woorden[:4])
+
+    url = (
+        "https://www.marktplaats.nl/q/"
+        + quote(zoekterm)
+    )
+
+    print(
+        f"   🔎 Vergelijken: {zoekterm}"
+    )
+
+    try:
+
+        await page.goto(
+            url,
+            wait_until="domcontentloaded",
+            timeout=45000
+        )
+
+        await page.wait_for_timeout(5000)
+
+    except Exception as e:
+        print("   ⚠️ Vergelijking mislukt")
+        return []
+
+    links = await page.locator(
+        'a[href*="/v/"]'
+    ).all()
+
+    prijzen = []
+
+    for link in links[:40]:
+
+        try:
+
+            tekst = await link.inner_text()
+
+            if not tekst:
+                continue
+
+            tekst_lower = tekst.lower()
+
+            if any(
+                woord in tekst_lower
+                for woord in UITSLUITEN
+            ):
+                continue
+
+            gevonden = re.findall(
+                r"€\s*([0-9]+(?:[.,][0-9]{1,2})?)",
+                tekst
+            )
+
+            if not gevonden:
+                continue
+
+            for prijs in gevonden[:1]:
+
+                waarde = float(
+                    prijs.replace(",", ".")
+                )
+
+                # Extreem hoge of lage prijzen negeren
+                if 1 <= waarde <= 5000:
+                    prijzen.append(waarde)
+
+        except:
+            pass
+
+    return prijzen[:20]
+
+
+def bereken_vertrouwen(
+    titel,
+    aankoopprijs,
+    vergelijkbare
+):
+
+    if not vergelijkbare:
+        return 0
+
+    vertrouwen = 35
+
+    # Meer vergelijkbare advertenties = meer vertrouwen
+    if len(vergelijkbare) >= 3:
+        vertrouwen += 15
+
+    if len(vergelijkbare) >= 5:
+        vertrouwen += 10
+
+    if len(vergelijkbare) >= 8:
+        vertrouwen += 5
+
+    # Bekend product / merk
+    if interessante_titel(titel):
+        vertrouwen += 15
+
+    # Gratis spullen zijn iets onzekerder
+    if aankoopprijs == 0:
+        vertrouwen -= 5
+
+    return min(95, vertrouwen)
+
+
+def bereken_score(
+    titel,
+    aankoopprijs,
+    verkoopprijs,
+    vertrouwen
+):
+
+    score = 20
+
+    if aankoopprijs == 0:
+        score += 25
+
+    elif aankoopprijs <= 2:
+        score += 20
+
+    else:
+        score += 10
+
+    if interessante_titel(titel):
+        score += 20
+
+    if verkoopprijs >= max(
+        aankoopprijs * 3,
+        20
+    ):
+        score += 15
+
+    elif verkoopprijs >= aankoopprijs * 2:
+        score += 10
+
+    if vertrouwen >= 80:
+        score += 10
+
+    return min(score, 100)
+
+
+async def controleer_deal(
+    page,
+    advertentie
+):
 
     titel = advertentie["titel"]
     prijs = advertentie["prijs"]
-    tekst = titel.lower()
+
+    if prijs is None:
+        return None
 
     if prijs > MAX_PRIJS:
         return None
 
-    for woord in UITSLUITEN:
-        if woord in tekst:
-            return None
-
-    score = bereken_score(titel, prijs)
-
-    if score < 40:
+    if uitgesloten(titel):
         return None
 
-    verkoopprijs = geschatte_verkoopprijs(
-        titel,
-        prijs
+    # We willen geen totaal willekeurige spullen
+    if not interessante_titel(titel):
+        return None
+
+    vergelijkbare = await vergelijkbare_prijzen(
+        page,
+        titel
     )
+
+    if len(vergelijkbare) < 3:
+        print(
+            f"   ❌ Te weinig vergelijkbare advertenties: "
+            f"{titel}"
+        )
+        return None
+
+    verkoopprijs = median(
+        vergelijkbare
+    )
+
+    vertrouwen = bereken_vertrouwen(
+        titel,
+        prijs,
+        vergelijkbare
+    )
+
+    score = bereken_score(
+        titel,
+        prijs,
+        verkoopprijs,
+        vertrouwen
+    )
+
+    # Minimaal dubbele waarde
+    if prijs == 0:
+        dubbele_waarde = (
+            verkoopprijs >= MIN_VERKOOPPRIJS
+        )
+    else:
+        dubbele_waarde = (
+            verkoopprijs >= prijs * 2
+        )
+
+    if not dubbele_waarde:
+        print(
+            f"   ❌ Geen 2x waarde: {titel}"
+        )
+        return None
+
+    if verkoopprijs < MIN_VERKOOPPRIJS:
+        return None
+
+    if vertrouwen < MIN_VERTROUWEN:
+        print(
+            f"   ❌ Vertrouwen te laag: "
+            f"{vertrouwen}% - {titel}"
+        )
+        return None
 
     winst = verkoopprijs - prijs
-
-    kans = min(
-        95,
-        35 + score // 2
-    )
 
     return {
         "titel": titel,
@@ -263,7 +443,8 @@ def controleer_deal(advertentie):
         "verkoopprijs": verkoopprijs,
         "winst": winst,
         "score": score,
-        "kans": kans,
+        "vertrouwen": vertrouwen,
+        "vergelijkbare": len(vergelijkbare),
         "link": advertentie["link"]
     }
 
@@ -272,10 +453,12 @@ async def main():
 
     print()
     print("======================================")
-    print("   MARKTPLAATS DEALBOT")
+    print("       MARKTPLAATS DEALBOT")
     print("======================================")
     print("📍 Zoekgebied: 8 km rond 3116")
     print("💰 Maximum aankoop: €5")
+    print("📈 Minimaal: 2x verwachte waarde")
+    print("🎯 Minimaal vertrouwen: 70%")
     print()
 
     async with async_playwright() as p:
@@ -286,7 +469,9 @@ async def main():
 
         page = await browser.new_page()
 
-        advertenties = await zoek_advertenties(page)
+        advertenties = await zoek_advertenties(
+            page
+        )
 
         print(
             f"📦 {len(advertenties)} unieke advertenties gevonden."
@@ -296,13 +481,15 @@ async def main():
 
         for advertentie in advertenties:
 
-            deal = controleer_deal(
+            deal = await controleer_deal(
+                page,
                 advertentie
             )
 
             if deal:
                 deals.append(deal)
 
+        print()
         print(
             f"🔥 {len(deals)} mogelijke deals gevonden."
         )
@@ -310,22 +497,32 @@ async def main():
         for deal in deals:
 
             print()
-            print("🔥 DEAL:", deal["titel"])
-            print("💰 Aankoop:", f"€{deal['prijs']:.2f}")
-            print("💵 Verkoop:", f"€{deal['verkoopprijs']:.2f}")
-            print("📈 Winst:", f"€{deal['winst']:.2f}")
-            print("⭐ Score:", deal["score"])
-            print("🎯 Kans:", f"{deal['kans']}%")
-
-            stuur_discord(
-                deal["titel"],
-                deal["prijs"],
-                deal["verkoopprijs"],
-                deal["winst"],
-                deal["score"],
-                deal["kans"],
-                deal["link"]
+            print(
+                "🔥 DEAL:",
+                deal["titel"]
             )
+            print(
+                "💰 Aankoop:",
+                f"€{deal['prijs']:.2f}"
+            )
+            print(
+                "💵 Verkoop:",
+                f"€{deal['verkoopprijs']:.2f}"
+            )
+            print(
+                "📈 Winst:",
+                f"€{deal['winst']:.2f}"
+            )
+            print(
+                "⭐ Score:",
+                deal["score"]
+            )
+            print(
+                "🎯 Vertrouwen:",
+                f"{deal['vertrouwen']}%"
+            )
+
+            stuur_discord(deal)
 
         await browser.close()
 
