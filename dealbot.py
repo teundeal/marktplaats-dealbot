@@ -8,7 +8,7 @@ from playwright.sync_api import sync_playwright
 DISCORD_WEBHOOK = os.environ["DISCORD_WEBHOOK"]
 
 POSTCODE = "3116"
-AFSTAND = "8000"
+AFSTAND = 8000
 MAX_PRIJS = 5.00
 
 ZOEKOPDRACHTEN = [
