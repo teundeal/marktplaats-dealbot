@@ -2,15 +2,15 @@ import os
 import re
 import statistics
 import requests
+from urllib.parse import quote
 from playwright.sync_api import sync_playwright
 
 DISCORD_WEBHOOK = os.environ["DISCORD_WEBHOOK"]
 
 POSTCODE = "3116"
 AFSTAND = "8000"
-MAX_PRIJS = 500  # €5 in centen
+MAX_PRIJS = 5
 
-# Brede zoekopdrachten zodat we niet tientallen keren hoeven te zoeken
 ZOEKOPDRACHTEN = [
     "elektronica",
     "telefoon",
@@ -18,184 +18,163 @@ ZOEKOPDRACHTEN = [
     "game",
     "lego",
     "pokemon",
-    "nike",
-    "adidas",
+    "schoenen",
     "horloge",
     "modelauto",
-]
-
-# Dingen die we absoluut niet willen
-UITSLUITEN = [
-    "bank",
-    "bankstel",
-    "hoekbank",
-    "stoel",
-    "tafel",
-    "eettafel",
-    "bed",
-    "kast",
-    "bureau",
-    "matras",
-    "wasmachine",
-    "droger",
-    "koelkast",
-    "vriezer",
-    "vaatwasser",
-    "televisie",
-    "tv",
-    "airco",
-    "service",
-    "montage",
-    "reparatie",
-    "klus",
-    "verhuizing",
-]
-
-# Dingen die vaak interessant zijn voor doorverkoop
-INTERESSANT = [
-    "iphone",
-    "ipad",
-    "samsung",
-    "sony",
-    "canon",
-    "nikon",
-    "camera",
-    "lens",
-    "objectief",
-    "playstation",
-    "ps4",
-    "ps5",
-    "xbox",
-    "nintendo",
-    "switch",
-    "game",
-    "controller",
-    "lego",
-    "pokemon",
-    "nike",
-    "adidas",
-    "air jordan",
-    "dyson",
-    "logitech",
-    "jbl",
-    "bose",
-    "garmin",
-    "casio",
-    "gopro",
-    "dji",
-    "koptelefoon",
-    "speaker",
     "gereedschap",
-    "boormachine",
-    "verrekijker",
-    "horloge",
-    "modelauto",
-    "burago",
-    "ferrari",
-    "mercedes",
-    "bmw",
-    "porsche",
-    "nokia",
-    "tablet",
-    "toetsenbord",
-    "muis",
+]
+
+UITSLUITEN = [
+    "bank", "bankstel", "hoekbank", "stoel", "tafel",
+    "eettafel", "bed", "kast", "bureau", "matras",
+    "wasmachine", "droger", "koelkast", "vriezer",
+    "vaatwasser", "televisie", "tv", "airco", "piano",
+    "orgel", "stelling", "pallet", "service", "montage",
+    "reparatie", "installatie", "adviseur", "gezocht",
+    "inkoop", "verhuur", "bedrijf", "zakelijk", "offerte",
+    "klus",
+]
+
+INTERESSANT = [
+    "iphone", "ipad", "samsung", "galaxy", "sony", "canon",
+    "nikon", "camera", "lens", "objectief", "playstation",
+    "ps4", "ps5", "xbox", "nintendo", "switch", "game",
+    "controller", "lego", "pokemon", "nike", "adidas",
+    "jordan", "dyson", "logitech", "jbl", "bose", "garmin",
+    "casio", "gopro", "dji", "koptelefoon", "headset",
+    "speaker", "boormachine", "gereedschap", "verrekijker",
+    "horloge", "modelauto", "burago", "ferrari", "mercedes",
+    "bmw", "porsche", "nokia", "tablet", "toetsenbord",
+    "muis", "router", "ssd", "hdd", "arduino", "raspberry",
 ]
 
 
-def prijs_uit_tekst(tekst):
-    """Probeert een prijs uit een tekst te halen."""
-    patronen = [
-        r"€\s?(\d+(?:[.,]\d{1,2})?)",
-        r"(\d+(?:[.,]\d{1,2})?)\s?€",
+def schone_titel(titel):
+    rommel = [
+        "Bewaren in Mijn Favorieten",
+        "Bewaren in mijn favorieten",
     ]
 
+    for stuk in rommel:
+        titel = titel.replace(stuk, "")
+
+    titel = re.sub(r"\s+", " ", titel)
+
+    return titel.strip()
+
+
+def uitgesloten(titel):
+    tekst = titel.lower()
+    return any(woord in tekst for woord in UITSLUITEN)
+
+
+def interessant(titel):
+    tekst = titel.lower()
+    return any(woord in tekst for woord in INTERESSANT)
+
+
+def vind_prijs(tekst):
+    tekst = tekst.replace("\xa0", " ")
+
+    patronen = [
+        r"€\s*([0-9]+(?:[.,][0-9]{1,2})?)",
+        r"([0-9]+(?:[.,][0-9]{1,2})?)\s*€",
+    ]
+
+    prijzen = []
+
     for patroon in patronen:
-        match = re.search(patroon, tekst)
-        if match:
+        for match in re.findall(patroon, tekst):
             try:
-                return float(match.group(1).replace(",", "."))
-            except:
+                prijs = float(match.replace(",", "."))
+
+                if 0 <= prijs <= 5:
+                    prijzen.append(prijs)
+
+            except ValueError:
                 pass
+
+    if prijzen:
+        return min(prijzen)
+
+    if "gratis" in tekst.lower():
+        return 0
 
     return None
 
 
-def uitgesloten(titel):
-    titel = titel.lower()
-
-    return any(woord in titel for woord in UITSLUITEN)
-
-
-def interessant(titel):
-    titel = titel.lower()
-
-    return any(woord in titel for woord in INTERESSANT)
-
-
-def vergelijkbare_prijzen(page, zoekterm):
-    """
-    Zoekt maximaal 5 vergelijkbare advertenties.
-    Daardoor blijft de bot snel.
-    """
-
-    url = (
-        "https://www.marktplaats.nl/q/"
-        + requests.utils.quote(zoekterm)
-        + "/?postcode="
-        + POSTCODE
-        + "&distanceMeters="
-        + AFSTAND
-    )
+def zoek_vergelijkbare_prijzen(page, zoekterm):
+    url = "https://www.marktplaats.nl/q/" + quote(zoekterm) + "/"
 
     try:
-        page.goto(url, wait_until="domcontentloaded", timeout=15000)
-        page.wait_for_timeout(1000)
+        page.goto(
+            url,
+            wait_until="domcontentloaded",
+            timeout=12000
+        )
+
+        page.wait_for_timeout(600)
+
+        tekst = page.locator("body").inner_text()
+
+        gevonden = re.findall(
+            r"€\s*([0-9]+(?:[.,][0-9]{1,2})?)",
+            tekst
+        )
 
         prijzen = []
 
-        teksten = page.locator("body").inner_text()
-
-        for match in re.findall(r"€\s?(\d+(?:[.,]\d{1,2})?)", teksten):
+        for waarde in gevonden:
             try:
-                prijs = float(match.replace(",", "."))
+                prijs = float(waarde.replace(",", "."))
 
-                # Alleen normale tweedehandsprijzen
-                if 5 < prijs < 5000:
+                if 5 <= prijs <= 2000:
                     prijzen.append(prijs)
-            except:
+
+            except ValueError:
                 pass
 
-        # Uniek maken en maximaal 10 prijzen gebruiken
-        prijzen = sorted(set(prijzen))[:10]
+        return sorted(set(prijzen))[:10]
 
-        return prijzen
-
-    except:
+    except Exception:
         return []
 
 
-def discord_stuur(deals):
+def stuur_discord(deals):
     if not deals:
         print("🔥 0 mogelijke deals gevonden.")
         return
 
     for deal in deals:
+
         bericht = (
-            "🔥 **MOGELIJKE MARKTPLAATS DEAL**\n\n"
+            "🔥 **MOGELIJKE DEAL**\n\n"
             f"**{deal['titel']}**\n"
             f"💰 Koopprijs: €{deal['koopprijs']:.2f}\n"
             f"💵 Geschatte verkoop: €{deal['verkoopprijs']:.2f}\n"
             f"📈 Mogelijke winst: €{deal['winst']:.2f}\n"
             f"🎯 Vertrouwen: {deal['vertrouwen']}%\n"
-            f"📊 Vergelijkbare advertenties: {deal['vergelijkingen']}\n\n"
+            f"📊 Vergelijkingen: {deal['vergelijkingen']}\n\n"
             f"🔗 {deal['url']}"
         )
 
-        requests.post(
-            DISCORD_WEBHOOK,
-            json={"content": bericht},
-            timeout=10
-        )
+        try:
+            response = requests.post(
+                DISCORD_WEBHOOK,
+                json={"content": bericht},
+                timeout=10
+            )
+
+            if response.status_code in (200, 204):
+                print("📲 Deal naar Discord gestuurd.")
+            else:
+                print(
+                    "⚠️ Discord fout:",
+                    response.status_code
+                )
+
+        except Exception as e:
+            print("⚠️ Discord fout:", e)
 
 
 def main():
@@ -209,21 +188,22 @@ def main():
 
         print("🔎 Marktplaats zoeken...")
 
-        # Slechts 10 zoekopdrachten
+        # Advertenties verzamelen
         for zoekterm in ZOEKOPDRACHTEN:
 
             url = (
                 "https://www.marktplaats.nl/q/"
-                + requests.utils.quote(zoekterm)
+                + quote(zoekterm)
                 + "/?postcode="
                 + POSTCODE
                 + "&distanceMeters="
                 + AFSTAND
                 + "&priceCentsTo="
-                + str(MAX_PRIJS)
+                + str(MAX_PRIJS * 100)
             )
 
             try:
+
                 page.goto(
                     url,
                     wait_until="domcontentloaded",
@@ -233,52 +213,63 @@ def main():
                 page.wait_for_timeout(700)
 
                 links = page.locator("a").evaluate_all(
-                    """els => els.map(a => ({
+                    """
+                    els => els.map(a => ({
                         href: a.href,
                         text: a.innerText
-                    }))"""
+                    }))
+                    """
                 )
 
-                for link in links:
+                for item in links:
 
-                    href = link.get("href", "")
-                    titel = link.get("text", "").strip()
+                    href = item.get("href", "")
+                    titel = item.get("text", "").strip()
 
                     if "/v/" not in href:
                         continue
 
+                    titel = schone_titel(titel)
+
                     if not titel:
                         continue
 
-                    # Unieke advertenties
+                    if uitgesloten(titel):
+                        continue
+
+                    if not interessant(titel):
+                        continue
+
                     advertenties[href] = titel
 
-            except Exception as e:
-                print("⚠️ Zoekfout:", zoekterm)
+            except Exception:
+                print(f"⚠️ Zoekfout bij '{zoekterm}'")
 
-        print(f"📦 {len(advertenties)} unieke advertenties gevonden.")
+        print(
+            f"📦 {len(advertenties)} interessante advertenties gevonden."
+        )
+
+        # Maximaal 20 kandidaten controleren
+        kandidaten = list(advertenties.items())[:20]
+
+        print(
+            f"🔍 We controleren maximaal {len(kandidaten)} kandidaten."
+        )
 
         deals = []
 
-        # We bekijken maximaal 25 advertenties
-        kandidaten = list(advertenties.items())[:25]
+        for nummer, (url, titel) in enumerate(
+            kandidaten,
+            1
+        ):
 
-        for i, (url, titel) in enumerate(kandidaten, 1):
+            print(
+                f"➡️ Controle {nummer}/{len(kandidaten)}: "
+                f"{titel[:70]}"
+            )
 
-            print(f"➡️ Controle {i}/{len(kandidaten)}: {titel[:60]}")
-
-            titel_lower = titel.lower()
-
-            # Grote spullen / diensten meteen overslaan
-            if uitgesloten(titel):
-                continue
-
-            # Alleen advertenties met enige kans
-            if not interessant(titel):
-                continue
-
-            # Advertentie openen om echte prijs te vinden
             try:
+
                 page.goto(
                     url,
                     wait_until="domcontentloaded",
@@ -289,82 +280,96 @@ def main():
 
                 tekst = page.locator("body").inner_text()
 
-                koopprijs = prijs_uit_tekst(tekst)
+                koopprijs = vind_prijs(tekst)
 
                 if koopprijs is None:
-                    # Waarschijnlijk gratis
-                    if "gratis" in tekst.lower():
-                        koopprijs = 0
-                    else:
+                    continue
+
+                if koopprijs > MAX_PRIJS:
+                    continue
+
+                woorden = re.findall(
+                    r"[A-Za-z0-9]+",
+                    titel
+                )
+
+                zoekwoorden = [
+                    woord for woord in woorden
+                    if len(woord) >= 3
+                ]
+
+                zoekterm = " ".join(zoekwoorden[:4])
+
+                if not zoekterm:
+                    continue
+
+                print(
+                    f"   🔎 Vergelijken met: {zoekterm}"
+                )
+
+                prijzen = zoek_vergelijkbare_prijzen(
+                    page,
+                    zoekterm
+                )
+
+                if len(prijzen) < 3:
+                    print("   ❌ Te weinig vergelijkbare prijzen.")
+                    continue
+
+                verkoopprijs = statistics.median(prijzen)
+
+                if koopprijs == 0:
+
+                    if verkoopprijs < 10:
                         continue
 
-                if koopprijs > 5:
-                    continue
+                else:
 
-            except:
-                continue
+                    if verkoopprijs < koopprijs * 2:
+                        continue
 
-            # Zoek vergelijkbare advertenties
-            zoekwoorden = titel.split()
+                vertrouwen = 70
 
-            # Gebruik alleen de eerste paar woorden
-            zoekterm = " ".join(zoekwoorden[:4])
+                if len(prijzen) >= 5:
+                    vertrouwen += 10
 
-            print(f"   🔎 Vergelijken: {zoekterm}")
+                if len(prijzen) >= 8:
+                    vertrouwen += 10
 
-            prijzen = vergelijkbare_prijzen(page, zoekterm)
+                vertrouwen = min(vertrouwen, 95)
 
-            if len(prijzen) < 3:
-                print("   ❌ Te weinig vergelijkingen")
-                continue
+                winst = verkoopprijs - koopprijs
 
-            verkoopprijs = statistics.median(prijzen)
+                deals.append({
+                    "titel": titel,
+                    "koopprijs": koopprijs,
+                    "verkoopprijs": verkoopprijs,
+                    "winst": winst,
+                    "vertrouwen": vertrouwen,
+                    "vergelijkingen": len(prijzen),
+                    "url": url,
+                })
 
-            # Gratis spullen moeten minimaal ongeveer €10 waard zijn
-            if koopprijs == 0:
-                if verkoopprijs < 10:
-                    continue
-            else:
-                if verkoopprijs < koopprijs * 2:
-                    continue
+                print(
+                    f"   🔥 DEAL! Verkoop ongeveer "
+                    f"€{verkoopprijs:.2f}"
+                )
 
-            # Vertrouwen berekenen
-            vertrouwen = 70
-
-            if len(prijzen) >= 5:
-                vertrouwen += 10
-
-            if len(prijzen) >= 8:
-                vertrouwen += 10
-
-            vertrouwen = min(95, vertrouwen)
-
-            if vertrouwen < 70:
-                continue
-
-            winst = verkoopprijs - koopprijs
-
-            deals.append({
-                "titel": titel,
-                "koopprijs": koopprijs,
-                "verkoopprijs": verkoopprijs,
-                "winst": winst,
-                "vertrouwen": vertrouwen,
-                "vergelijkingen": len(prijzen),
-                "url": url,
-            })
+            except Exception:
+                print("   ⚠️ Advertentie overgeslagen.")
 
         browser.close()
 
-    # Beste deals eerst
     deals.sort(
-        key=lambda x: x["winst"],
+        key=lambda deal: deal["winst"],
         reverse=True
     )
 
-    print(f"🔥 {len(deals)} mogelijke deals gevonden.")
+    print(
+        f"🔥 {len(deals)} mogelijke deals gevonden."
+    )
 
-    discord_stuur(deals)
+    stuur_discord(deals)
 
 
 if __name__ == "__main__":
