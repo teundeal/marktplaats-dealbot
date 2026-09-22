@@ -3,7 +3,7 @@ import re
 import statistics
 import requests
 
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 from playwright.sync_api import sync_playwright
 
 
@@ -34,7 +34,7 @@ MAX_KANDIDATEN = 20
 
 
 # ============================================================
-# PRIJS HERKENNEN
+# PRIJS
 # ============================================================
 
 def euro_naar_float(tekst):
@@ -52,16 +52,13 @@ def euro_naar_float(tekst):
 
     waarde = match.group(0)
 
-    # 1.500,00 -> 1500.00
     if "." in waarde and "," in waarde:
         waarde = waarde.replace(".", "")
         waarde = waarde.replace(",", ".")
 
-    # 4,50 -> 4.50
     elif "," in waarde:
         waarde = waarde.replace(",", ".")
 
-    # 1.500 -> 1500
     elif "." in waarde:
         delen = waarde.split(".")
 
@@ -86,9 +83,7 @@ def vind_europrijzen(tekst):
     prijzen = []
 
     for patroon in patronen:
-        gevonden = re.findall(patroon, tekst)
-
-        for item in gevonden:
+        for item in re.findall(patroon, tekst):
             prijs = euro_naar_float(item)
 
             if prijs is not None and prijs not in prijzen:
@@ -98,7 +93,7 @@ def vind_europrijzen(tekst):
 
 
 # ============================================================
-# TITEL SCHOONMAKEN
+# TITEL
 # ============================================================
 
 def schone_titel(tekst):
@@ -107,47 +102,22 @@ def schone_titel(tekst):
 
     tekst = re.sub(r"\s+", " ", tekst).strip()
 
-    # Veelvoorkomende Marktplaats-rommel verwijderen
-    tekst = re.sub(
+    rommel = [
         r"Bewaren in Mijn Favorieten",
-        "",
-        tekst,
-        flags=re.IGNORECASE
-    )
-
-    tekst = re.sub(
         r"Details.*$",
-        "",
-        tekst,
-        flags=re.IGNORECASE
-    )
-
-    tekst = re.sub(
         r"Ophalen.*$",
-        "",
-        tekst,
-        flags=re.IGNORECASE
-    )
-
-    tekst = re.sub(
         r"Verzenden.*$",
-        "",
-        tekst,
-        flags=re.IGNORECASE
-    )
-
-    # Prijs en alles erna verwijderen
-    tekst = re.sub(
         r"€\s*\d[\d.,]*.*$",
-        "",
-        tekst
-    )
-
-    tekst = re.sub(
         r"\d[\d.,]*\s*€.*$",
-        "",
-        tekst
-    )
+    ]
+
+    for patroon in rommel:
+        tekst = re.sub(
+            patroon,
+            "",
+            tekst,
+            flags=re.IGNORECASE
+        )
 
     return re.sub(r"\s+", " ", tekst).strip()
 
@@ -211,6 +181,9 @@ DIENSTEN = [
     "belastingaangifte",
     "boekhouding",
     "accountancy",
+    "problemen",
+    "computerhulp",
+    "hulp aan huis",
 ]
 
 
@@ -218,14 +191,17 @@ def is_dienst(tekst):
     tekst = tekst.lower()
 
     for woord in DIENSTEN:
-        if re.search(r"\b" + re.escape(woord) + r"\b", tekst):
+        if re.search(
+            r"\b" + re.escape(woord) + r"\b",
+            tekst
+        ):
             return True
 
     return False
 
 
 # ============================================================
-# GROTE / ONHANDIGE SPULLEN
+# GROTE SPULLEN
 # ============================================================
 
 UITGESLOTEN = [
@@ -257,6 +233,13 @@ UITGESLOTEN = [
     "boekenkast",
     "massagestoel",
     "fitnessapparaat",
+    "fiets",
+    "brommer",
+    "scooter",
+    "motor",
+    "auto",
+    "caravan",
+    "aanhanger",
 ]
 
 
@@ -270,7 +253,7 @@ def is_groot_spul(tekst):
 
 
 # ============================================================
-# PROMOTIES / TOPADVERTENTIES
+# PROMOTIES / EXTERNE SITES
 # ============================================================
 
 VERBODEN = [
@@ -297,6 +280,11 @@ VERBODEN = [
     "bel voor",
     "whatsapp voor",
     "afspraak",
+    "catawiki",
+    "catawiki.com",
+    "auction",
+    "veiling",
+    "bied mee",
 ]
 
 
@@ -328,38 +316,46 @@ INTERESSANT = [
     "lumix",
     "lens",
     "objectief",
+
     "iphone",
     "samsung",
     "ipad",
     "macbook",
+
     "nintendo",
     "playstation",
     "xbox",
+    "game",
+    "controller",
+
     "lego",
     "pokemon",
+
     "hot wheels",
     "modelauto",
+
     "horloge",
     "omega",
     "rolex",
     "seiko",
     "casio",
     "breitling",
+
     "gereedschap",
     "makita",
     "bosch",
     "dewalt",
     "milwaukee",
+
     "dji",
     "gopro",
     "garmin",
+
     "airpods",
     "headphones",
     "koptelefoon",
     "speaker",
     "bluetooth",
-    "controller",
-    "game",
 ]
 
 
@@ -373,7 +369,34 @@ def is_interessant(titel):
 
 
 # ============================================================
-# AFSTAND HERKENNEN
+# MARKTPLAATS LINK CONTROLEREN
+# ============================================================
+
+def is_echte_marktplaats_link(href):
+    if not href:
+        return False
+
+    try:
+        parsed = urlparse(href)
+        host = parsed.netloc.lower()
+
+        if host.startswith("www."):
+            host = host[4:]
+
+        if host != "marktplaats.nl":
+            return False
+
+        if "/v/" not in parsed.path:
+            return False
+
+        return True
+
+    except Exception:
+        return False
+
+
+# ============================================================
+# AFSTAND
 # ============================================================
 
 def vind_afstand(tekst):
@@ -381,22 +404,25 @@ def vind_afstand(tekst):
         return None
 
     patronen = [
+        r"(\d+(?:[.,]\d+)?)\s*km\s*afstand",
         r"(\d+(?:[.,]\d+)?)\s*km",
-        r"(\d+(?:[.,]\d+)?)\s*km afstand",
     ]
 
     for patroon in patronen:
+
         match = re.search(
             patroon,
             tekst.lower()
         )
 
         if match:
+
             waarde = match.group(1)
             waarde = waarde.replace(",", ".")
 
             try:
                 return float(waarde)
+
             except ValueError:
                 pass
 
@@ -404,14 +430,16 @@ def vind_afstand(tekst):
 
 
 # ============================================================
-# ADVERTENTIES UITLEZEN
+# ADVERTENTIES LEZEN
 # ============================================================
 
 def lees_advertenties(page):
 
     advertenties = []
 
-    links = page.locator('a[href*="/v/"]')
+    links = page.locator(
+        'a[href*="/v/"]'
+    )
 
     aantal = links.count()
 
@@ -438,6 +466,19 @@ def lees_advertenties(page):
                     + href
                 )
 
+            # =================================================
+            # ALLEEN ECHTE MARKTPLAATS LINKS
+            # =================================================
+
+            if not is_echte_marktplaats_link(href):
+
+                print(
+                    "   🚫 Externe link overgeslagen:",
+                    href[:100]
+                )
+
+                continue
+
             if href in urls_al_gezien:
                 continue
 
@@ -458,48 +499,90 @@ def lees_advertenties(page):
 
             laag = tekst.lower()
 
-            # Bieden/ruilen is geen vaste aankoopprijs
+            # =================================================
+            # CATAWIKI / EXTERNE PROMOTIES
+            # =================================================
+
+            if "catawiki" in laag:
+                print(
+                    "   🚫 Catawiki overgeslagen"
+                )
+                continue
+
+            # =================================================
+            # BIEDEN / RUILEN
+            # =================================================
+
             if "bieden" in laag:
                 continue
 
             if "ruilen" in laag:
                 continue
 
-            # Diensten/promoties eruit
+            # =================================================
+            # DIENSTEN / PROMOTIES
+            # =================================================
+
             if is_promotie_of_dienst(tekst):
                 continue
 
-            # Grote spullen eruit
+            # =================================================
+            # GROTE SPULLEN
+            # =================================================
+
             if is_groot_spul(tekst):
                 continue
+
+            # =================================================
+            # AFSTAND
+            # =================================================
+
+            afstand = vind_afstand(tekst)
+
+            # Geen afstand = niet betrouwbaar genoeg
+            if afstand is None:
+                continue
+
+            # Buiten 8 km = overslaan
+            if afstand > MAX_AFSTAND_KM:
+                continue
+
+            # =================================================
+            # PRIJS
+            # =================================================
 
             prijzen = vind_europrijzen(tekst)
 
             if not prijzen:
                 continue
 
-            # Zoek een prijs die maximaal €5 is
             aankoopprijs = None
 
             for prijs in prijzen:
 
                 if 0 <= prijs <= MAX_PRIJS:
+
                     aankoopprijs = prijs
                     break
 
             if aankoopprijs is None:
                 continue
 
+            # =================================================
+            # TITEL
+            # =================================================
+
             titel = schone_titel(tekst)
 
             if not titel:
                 continue
 
-            # Alleen interessante producten
             if not is_interessant(titel):
                 continue
 
-            afstand = vind_afstand(tekst)
+            # =================================================
+            # OPSLAAN
+            # =================================================
 
             advertenties.append({
                 "url": href,
@@ -516,7 +599,7 @@ def lees_advertenties(page):
 
 
 # ============================================================
-# VERKOOPPRIJZEN
+# VERKOOPPRIJZEN ZOEKEN
 # ============================================================
 
 def zoek_verkoopprijzen(page, zoekterm):
@@ -540,8 +623,10 @@ def zoek_verkoopprijzen(page, zoekterm):
 
         page.wait_for_timeout(1500)
 
-        advertenties = lees_vergelijkbare_advertenties(
-            page
+        advertenties = (
+            lees_vergelijkbare_advertenties(
+                page
+            )
         )
 
         prijzen = []
@@ -564,6 +649,10 @@ def zoek_verkoopprijzen(page, zoekterm):
 
         return []
 
+
+# ============================================================
+# VERGELIJKBARE ADVERTENTIES
+# ============================================================
 
 def lees_vergelijkbare_advertenties(page):
 
@@ -594,6 +683,12 @@ def lees_vergelijkbare_advertenties(page):
                     + href
                 )
 
+            # Alleen Marktplaats
+            if not is_echte_marktplaats_link(
+                href
+            ):
+                continue
+
             if href in urls:
                 continue
 
@@ -613,6 +708,9 @@ def lees_vergelijkbare_advertenties(page):
             ).strip()
 
             laag = tekst.lower()
+
+            if "catawiki" in laag:
+                continue
 
             if "bieden" in laag:
                 continue
@@ -661,7 +759,7 @@ def schat_verkoopprijs(prijzen):
     if not prijzen:
         return None
 
-    # Extreme uitschieters zoveel mogelijk verwijderen
+    # Extreme uitschieters verwijderen
     if len(prijzen) >= 4:
 
         mediaan = statistics.median(
@@ -764,20 +862,13 @@ def stuur_discord(
 
     afstand = advertentie["afstand"]
 
-    if afstand is None:
-        afstand_tekst = "Niet gevonden"
-    else:
-        afstand_tekst = (
-            f"{afstand:.1f} km"
-        )
-
     bericht = (
         "🔥 **MOGELIJKE MARKTPLAATS DEAL**\n\n"
         f"**{advertentie['titel']}**\n\n"
         f"💰 Aankoop: **€{aankoop:.2f}**\n"
         f"📈 Geschatte verkoop: **{verkoop_tekst}**\n"
         f"💵 Mogelijke winst: **{winst_tekst}**\n"
-        f"📍 Afstand: **{afstand_tekst}**\n"
+        f"📍 Afstand: **{afstand:.1f} km**\n"
         f"⭐ Deal score: **{score}/10**\n\n"
         f"🔗 {advertentie['url']}"
     )
@@ -814,15 +905,19 @@ def main():
     print("====================================")
     print("MARKTPLAATS DEALBOT")
     print("====================================")
+
     print(
         f"📍 Postcode: {POSTCODE}"
     )
+
     print(
         f"📏 Maximale afstand: {MAX_AFSTAND_KM} km"
     )
+
     print(
         f"💰 Maximale aankoopprijs: €{MAX_PRIJS:.2f}"
     )
+
     print()
 
     gevonden = []
@@ -863,12 +958,13 @@ def main():
 
                 page.wait_for_timeout(2000)
 
-                advertenties = lees_advertenties(
-                    page
+                advertenties = (
+                    lees_advertenties(page)
                 )
 
                 print(
-                    f"   📦 {len(advertenties)} goedkope producten gevonden"
+                    f"   📦 {len(advertenties)} "
+                    f"echte goedkope producten gevonden"
                 )
 
                 for advertentie in advertenties:
@@ -914,14 +1010,20 @@ def main():
             )
 
             print(
-                f"💰 Aankoop: €{advertentie['prijs']:.2f}"
+                f"💰 Aankoop: "
+                f"€{advertentie['prijs']:.2f}"
             )
 
-            zoekterm = advertentie["titel"]
+            print(
+                f"📍 Afstand: "
+                f"{advertentie['afstand']:.1f} km"
+            )
 
-            verkoopprijzen = zoek_verkoopprijzen(
-                page,
-                zoekterm
+            verkoopprijzen = (
+                zoek_verkoopprijzen(
+                    page,
+                    advertentie["titel"]
+                )
             )
 
             print(
@@ -929,8 +1031,10 @@ def main():
                 verkoopprijzen
             )
 
-            verkoopprijs = schat_verkoopprijs(
-                verkoopprijzen
+            verkoopprijs = (
+                schat_verkoopprijs(
+                    verkoopprijzen
+                )
             )
 
             print(
@@ -947,7 +1051,6 @@ def main():
                 f"⭐ Score: {score}/10"
             )
 
-            # Alleen echte interessante deals
             if score >= 5:
 
                 stuur_discord(
