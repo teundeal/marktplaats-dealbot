@@ -5,6 +5,13 @@ on:
   schedule:
     - cron: "7,22,37,52 * * * *"
 
+permissions:
+  contents: write
+
+concurrency:
+  group: marktplaats-dealbot
+  cancel-in-progress: false
+
 jobs:
   dealbot:
     runs-on: ubuntu-latest
@@ -28,3 +35,11 @@ jobs:
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         run: python dealbot.py
+
+      - name: Gezien advertenties opslaan
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add seen_deals.json
+          git diff --cached --quiet || git commit -m "Update seen deals"
+          git push
