@@ -11,8 +11,8 @@ from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeo
 # =========================
 
 POSTCODE = "3116"
-MAX_AFSTAND_KM = 8
-MAX_PRIJS = 5.00
+MAX_AFSTAND_KM = 10
+MAX_PRIJS = 10.00
 
 DISCORD_WEBHOOK = os.environ["DISCORD_WEBHOOK"]
 
@@ -602,8 +602,8 @@ def vind_advertentielinks(page, zoekterm):
         + quote(zoekterm)
         + "/?postcode="
         + POSTCODE
-        + "&distanceMeters=8000"
-        + "&priceCentsTo=500"
+        + "&distanceMeters=10000"
+        + "&priceCentsTo=10000"
     )
 
     print()
